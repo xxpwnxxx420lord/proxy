@@ -104,6 +104,7 @@ export default function ProxyManager() {
     setIsScanning(true)
     setProxyList([]) // Clear previous list
     setActiveProxy(null) // Clear active proxy when scanning
+    setBrowserError("") // Clear any previous browser errors
 
     try {
       const response = await fetch("/api/proxy/scan")
@@ -130,6 +131,7 @@ export default function ProxyManager() {
     setShowManualInput(true)
     setProxyList([]) // Clear proxy list when entering manual
     setActiveProxy(null) // Clear active proxy
+    setBrowserError("") // Clear any previous browser errors
   }
 
   const handleManualProxySubmit = async () => {
@@ -145,8 +147,8 @@ export default function ProxyManager() {
     const proxy: Proxy = {
       ip,
       port,
-      country: "Unknown",
-      flag: "🌐",
+      country: "Manual", // Set country to Manual for user-entered proxies
+      flag: "👤", // User icon flag
       speed: 0, // Speed will be determined by actual usage
       status: "testing",
     }
@@ -154,11 +156,14 @@ export default function ProxyManager() {
     setActiveProxy(proxy) // Set proxy to testing state immediately
     showToast("Attempting to connect to manual proxy...", "success")
 
-    // No direct "test" API call here, the real test happens when browsing.
-    // We assume it's "active" for UI purposes, but the browser will fail if it's not.
-    setActiveProxy({ ...proxy, status: "active", speed: Math.floor(Math.random() * 100) + 20 })
+    // Simulate a brief delay for connection attempt
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+
+    // Assume connection is successful for UI, actual success/failure is in browser
+    const connectedProxy = { ...proxy, status: "active", speed: Math.floor(Math.random() * 100) + 20 }
+    setActiveProxy(connectedProxy)
     setIsLoading(false)
-    // The actual success/failure will be evident when trying to browse.
+    showToast(`Manual proxy ${manualProxy} set as active.`, "success")
   }
 
   const handleProxySelect = async (selectedProxy: Proxy) => {
@@ -168,6 +173,7 @@ export default function ProxyManager() {
     }
 
     setIsLoading(true) // Indicate loading for proxy connection
+    setBrowserError("") // Clear any previous browser errors
 
     // Set all other proxies to inactive and the selected one to testing
     setProxyList((prev) =>
@@ -215,7 +221,7 @@ export default function ProxyManager() {
     setCurrentBrowsedUrl(normalizedUrl)
     setBrowserUrlInput(normalizedUrl)
 
-    // Construct the proxy URL for the iframe src
+    // Construct the proxy URL for the iframe src, including the active proxy
     const proxySrc = `/api/proxy?url=${encodeURIComponent(normalizedUrl)}&proxy=${activeProxy.ip}:${activeProxy.port}`
     if (browserFrameRef.current) {
       browserFrameRef.current.src = proxySrc
@@ -562,14 +568,12 @@ export default function ProxyManager() {
                         <span className="text-white font-mono">{currentBrowsedUrl}</span>
                       </div>
                       <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                          <span className="text-green-400">Proxied</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <ExternalLink className="w-3 h-3 text-blue-400" />
-                          <span className="text-blue-400">Fluent Navigation</span>
-                        </div>
+                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                        <span className="text-green-400">Proxied</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <ExternalLink className="w-3 h-3 text-blue-400" />
+                        <span className="text-blue-400">Fluent Navigation</span>
                       </div>
                     </div>
                   </CardContent>

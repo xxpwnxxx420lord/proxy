@@ -378,8 +378,12 @@ export async function GET(request: NextRequest) {
     clearTimeout(timeoutId)
 
     if (!response.ok) {
+      const errorText = await response.text()
+      console.error(
+        `Proxy fetch failed for ${targetUrl} via ${proxyString}: ${response.status} ${response.statusText} - ${errorText}`,
+      )
       return NextResponse.json(
-        { error: `Failed to fetch: ${response.status} ${response.statusText}` },
+        { error: `Failed to fetch: ${response.status} ${response.statusText}. Proxy might be down or blocked.` },
         { status: response.status },
       )
     }
@@ -410,7 +414,10 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Proxy error:", error)
     if (error instanceof Error && error.name === "AbortError") {
-      return NextResponse.json({ error: "Request timeout - the website took too long to respond" }, { status: 408 })
+      return NextResponse.json(
+        { error: "Request timeout - the website took too long to respond via proxy." },
+        { status: 408 },
+      )
     }
     return NextResponse.json(
       {

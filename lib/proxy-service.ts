@@ -15,8 +15,8 @@ interface SearchEngineConfig {
   headers: Record<string, string>
 }
 
-const PROXY_SOURCE_URL =
-  "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&skip=0&limit=10"
+// New, more reliable proxy source from GitHub
+const PROXY_SOURCE_URL = "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt"
 
 const COUNTRY_FLAGS: { [key: string]: string } = {
   US: "🇺🇸",
@@ -82,10 +82,11 @@ class ProxyService {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
+        cache: "no-store", // Ensure fresh proxies
       })
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch proxy list from ProxyScrape: HTTP ${response.status}`)
+        throw new Error(`Failed to fetch proxy list from GitHub: HTTP ${response.status}`)
       }
 
       const text = await response.text()
@@ -102,7 +103,7 @@ class ProxyService {
         }
       })
     } catch (error) {
-      console.error("Error fetching or parsing proxyscrape.com for proxy service:", error)
+      console.error("Error fetching or parsing proxy list from GitHub for proxy service:", error)
       this.proxyPool = [] // Clear pool on error
     }
   }
