@@ -203,43 +203,22 @@ export default function ProxyManager() {
     setIsBrowserLoading(true)
     setBrowserError("")
 
-    try {
-      let normalizedUrl = targetUrl.trim()
-      if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
-        normalizedUrl = `https://${normalizedUrl}`
-      }
-
-      const response = await fetch(`/api/proxy?url=${encodeURIComponent(normalizedUrl)}`)
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || `HTTP ${response.status}`)
-      }
-
-      const contentType = response.headers.get("content-type") || ""
-
-      if (contentType.includes("application/json")) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Unknown error")
-      }
-
-      const htmlContent = await response.text()
-      setFetchedHtml(htmlContent)
-      setCurrentBrowsedUrl(normalizedUrl)
-      setBrowserUrlInput(normalizedUrl)
-
-      if (addToHistory) {
-        const newHistory = browserHistory.slice(0, browserHistoryIndex + 1)
-        newHistory.push(normalizedUrl)
-        setBrowserHistory(newHistory)
-        setBrowserHistoryIndex(newHistory.length - 1)
-      }
-    } catch (err) {
-      setBrowserError(err instanceof Error ? err.message : "Failed to load URL")
-      setFetchedHtml("")
-    } finally {
-      setIsBrowserLoading(false)
+    let normalizedUrl = targetUrl.trim()
+    if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
+      normalizedUrl = `https://${normalizedUrl}`
     }
+
+    // Update the URL for the iframe directly
+    setCurrentBrowsedUrl(normalizedUrl)
+    setBrowserUrlInput(normalizedUrl)
+
+    if (addToHistory) {
+      const newHistory = browserHistory.slice(0, browserHistoryIndex + 1)
+      newHistory.push(normalizedUrl)
+      setBrowserHistory(newHistory)
+      setBrowserHistoryIndex(newHistory.length - 1)
+    }
+    // The iframe's onLoad will set isBrowserLoading to false
   }
 
   const handleBrowserSubmit = (e: React.FormEvent) => {
@@ -287,8 +266,8 @@ export default function ProxyManager() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2">Advanced Proxy Manager</h1>
-            <p className="text-gray-400">Secure web browsing with real proxy functionality</p>
+            <h1 className="text-3xl font-bold text-white mb-2">Syntaxical's proxy browser</h1>
+            <p className="text-gray-400">This is for the ultimate school experience without using a hotspot!</p>
           </div>
 
           <DropdownMenu>
@@ -614,7 +593,10 @@ export default function ProxyManager() {
               )}
 
               {/* Website Display */}
-              <div className="bg-white/5 border border-white/10 rounded-lg overflow-hidden" ref={browserFrameRef}>
+              <div
+                className="bg-white/5 border border-white/10 rounded-lg overflow-hidden relative"
+                ref={browserFrameRef}
+              >
                 {!activeProxy || activeProxy.status !== "active" ? (
                   <div className="flex items-center justify-center h-96">
                     <div className="text-center">
@@ -631,13 +613,21 @@ export default function ProxyManager() {
                       <p className="text-gray-400 text-sm mt-2">Fetching through proxy...</p>
                     </div>
                   </div>
-                ) : fetchedHtml ? (
-                  <div
-                    className="w-full h-[600px] bg-white rounded-lg overflow-auto"
-                    dangerouslySetInnerHTML={{ __html: fetchedHtml }}
-                  />
                 ) : (
-                  <div className="flex items-center justify-center h-96">
+                  <iframe
+                    src={currentBrowsedUrl ? `/api/proxy?url=${encodeURIComponent(currentBrowsedUrl)}` : undefined}
+                    title="Proxied Browser"
+                    className="w-full h-[600px] bg-white rounded-lg border-0"
+                    onLoad={() => setIsBrowserLoading(false)}
+                    onError={() => {
+                      setBrowserError("Failed to load content in iframe. Check proxy or URL.")
+                      setIsBrowserLoading(false)
+                    }}
+                  />
+                )}
+                {/* Overlay for initial state or error when iframe is not loaded */}
+                {!currentBrowsedUrl && activeProxy && activeProxy.status === "active" && !isBrowserLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/5">
                     <div className="text-center">
                       <div className="w-16 h-16 bg-gray-600 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Home className="h-8 w-8 text-gray-400" />
@@ -652,12 +642,10 @@ export default function ProxyManager() {
               <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <ExternalLink className="h-5 w-5 text-green-400" />
-                  <span className="font-semibold text-green-400">Fluent Navigation Enabled:</span>
+                  <span className="font-semibold text-green-400">Please enjoy</span>
                 </div>
                 <p className="text-green-300 text-sm">
-                  🎉 All website navigation now stays within the proxy! Click any link, submit forms, or follow
-                  redirects - everything will remain secure and proxied. The browser will automatically handle all
-                  navigation without opening external tabs.
+                  🎉 Please enjoy this project I made with this beautiful/wonderful user interface and I hope you guys love the uh mechanics and also enjoy the proxies. proxy list is provided by proxylist if your department bans proxylist that would be sad but if it is blocked I reccomend entering your own proxy through the method! I will add default proxies in a dropdown in the future!
                 </p>
               </div>
 
