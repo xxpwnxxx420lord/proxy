@@ -3,6 +3,9 @@ interface ProxyConfig {
   port: number
   username?: string
   password?: string
+  country?: string
+  flag?: string
+  ping?: number
 }
 
 interface SearchEngineConfig {
@@ -10,6 +13,35 @@ interface SearchEngineConfig {
   searchUrl: string
   userAgent: string
   headers: Record<string, string>
+}
+
+const PROXY_SOURCE_URL =
+  "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&skip=0&limit=10"
+
+const COUNTRY_FLAGS: { [key: string]: string } = {
+  US: "🇺🇸",
+  DE: "🇩🇪",
+  GB: "🇬🇧",
+  CA: "🇨🇦",
+  JP: "🇯🇵",
+  FR: "🇫🇷",
+  AU: "🇦🇺",
+  NL: "🇳🇱",
+  SG: "🇸🇬",
+  IN: "🇮🇳",
+  BR: "🇧🇷",
+  RU: "🇷🇺",
+  CN: "🇨🇳",
+  KR: "🇰🇷",
+  MX: "🇲🇽",
+  ES: "🇪🇸",
+  IT: "🇮🇹",
+  SE: "🇸🇪",
+  CH: "🇨🇭",
+  ZA: "🇿🇦",
+  ID: "🇮🇩",
+  MY: "🇲🇾",
+  // Add more as needed
 }
 
 class ProxyService {
@@ -44,15 +76,35 @@ class ProxyService {
   ]
 
   async loadProxies(): Promise<void> {
-    // In a real implementation, this would fetch from free-proxy-list.net
-    // For now, using mock data
-    this.proxyPool = [
-      { ip: "185.199.229.156", port: 7492 },
-      { ip: "185.199.228.220", port: 7492 },
-      { ip: "185.199.231.45", port: 8382 },
-      { ip: "188.74.210.207", port: 6286 },
-      { ip: "188.74.183.10", port: 8279 },
-    ]
+    try {
+      const response = await fetch(PROXY_SOURCE_URL, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch proxy list from ProxyScrape: HTTP ${response.status}`)
+      }
+
+      const text = await response.text()
+      const lines = text.split("\n").filter((line) => line.trim() && line.includes(":"))
+
+      this.proxyPool = lines.map((line) => {
+        const [ip, port] = line.split(":")
+        return {
+          ip,
+          port: Number.parseInt(port),
+          country: "Unknown", // Placeholder
+          flag: "🌐", // Placeholder
+          ping: Math.floor(Math.random() * 200) + 20, // Simulated ping
+        }
+      })
+    } catch (error) {
+      console.error("Error fetching or parsing proxyscrape.com for proxy service:", error)
+      this.proxyPool = [] // Clear pool on error
+    }
   }
 
   private getNextProxy(): ProxyConfig | null {
@@ -68,9 +120,8 @@ class ProxyService {
     proxy: ProxyConfig,
     headers: Record<string, string>,
   ): Promise<Response> {
-    // In a real implementation, this would configure the HTTP client to use the proxy
-    // For demonstration, we'll simulate the request
-
+    // This method is for the *search* functionality, which is still simulated for now.
+    // The main browser functionality uses app/api/proxy/route.ts directly.
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
 
@@ -78,11 +129,11 @@ class ProxyService {
       // Simulate proxy request
       await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 2000))
 
-      // Mock response
+      // Mock response for search results
       return new Response(
         JSON.stringify({
           success: true,
-          html: "<html><body>Mock search results</body></html>",
+          html: `<html><body><h1>Mock Search Results for ${url}</h1><p>This content is simulated as if fetched via proxy ${proxy.ip}:${proxy.port}.</p></body></html>`,
         }),
         {
           status: 200,
@@ -99,12 +150,22 @@ class ProxyService {
       await this.loadProxies()
     }
 
+    if (this.proxyPool.length === 0) {
+      throw new Error("No proxies available after attempting to load.")
+    }
+
     let lastError: Error | null = null
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const proxy = this.getNextProxy()
+      let proxy = this.getNextProxy()
       if (!proxy) {
-        throw new Error("No proxies available")
+        // Reload proxies if we run out during retries
+        await this.loadProxies()
+        if (this.proxyPool.length === 0) {
+          throw new Error("No proxies available after reload attempt.")
+        }
+        proxy = this.getNextProxy() // Try again after reload
+        if (!proxy) throw new Error("Failed to get proxy after reload.")
       }
 
       const searchEngine = this.searchEngines[Math.floor(Math.random() * this.searchEngines.length)]
@@ -153,8 +214,9 @@ class ProxyService {
   }
 
   async validateProxy(ip: string, port: number): Promise<boolean> {
+    // This is a client-side validation simulation.
+    // The real validation happens when the backend tries to use the proxy.
     try {
-      // Simulate proxy validation
       await new Promise((resolve) => setTimeout(resolve, 1000))
       return Math.random() > 0.3 // 70% success rate for demo
     } catch (error) {

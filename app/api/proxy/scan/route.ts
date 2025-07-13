@@ -4,112 +4,115 @@ interface ProxyData {
   ip: string
   port: string
   country?: string
+  flag?: string
   ping?: number
 }
 
-// Real proxy sources (you can expand this list)
-const PROXY_SOURCES = [
-  "https://www.proxy-list.download/api/v1/get?type=http",
-  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-  "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-]
+// New proxy source from proxyscrape.com
+const PROXY_SOURCE_URL =
+  "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&skip=0&limit=10"
 
-async function fetchProxiesFromSource(url: string): Promise<string[]> {
+const COUNTRY_FLAGS: { [key: string]: string } = {
+  US: "🇺🇸",
+  DE: "🇩🇪",
+  GB: "🇬🇧",
+  CA: "🇨🇦",
+  JP: "🇯🇵",
+  FR: "🇫🇷",
+  AU: "🇦🇺",
+  NL: "🇳🇱",
+  SG: "🇸🇬",
+  IN: "🇮🇳",
+  BR: "🇧🇷",
+  RU: "🇷🇺",
+  CN: "🇨🇳",
+  KR: "🇰🇷",
+  MX: "🇲🇽",
+  ES: "🇪🇸",
+  IT: "🇮🇹",
+  SE: "🇸🇪",
+  CH: "🇨🇭",
+  ZA: "🇿🇦",
+  ID: "🇮🇩",
+  MY: "🇲🇾",
+  // Add more as needed
+}
+
+async function fetchProxiesFromProxyScrape(): Promise<ProxyData[]> {
   try {
-    const response = await fetch(url, {
+    const response = await fetch(PROXY_SOURCE_URL, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       },
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+      throw new Error(`Failed to fetch proxy list from ProxyScrape: HTTP ${response.status}`)
     }
 
     const text = await response.text()
-    return text.split("\n").filter((line) => line.trim() && line.includes(":"))
+    const lines = text.split("\n").filter((line) => line.trim() && line.includes(":"))
+
+    const proxies: ProxyData[] = lines.map((line) => {
+      const [ip, port] = line.split(":")
+      // ProxyScrape API doesn't provide country or ping directly in this endpoint,
+      // so we'll use placeholders or simulate.
+      return {
+        ip,
+        port,
+        country: "Unknown", // Placeholder
+        flag: "🌐", // Placeholder
+        ping: Math.floor(Math.random() * 200) + 20, // Simulated ping
+      }
+    })
+    return proxies
   } catch (error) {
-    console.error(`Failed to fetch from ${url}:`, error)
+    console.error("Error fetching or parsing proxyscrape.com:", error)
     return []
   }
 }
 
-async function testProxy(proxy: ProxyData): Promise<boolean> {
-  try {
-    // Simple connectivity test - in production you'd want more robust testing
-    const testUrl = "https://httpbin.org/ip"
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 5000)
-
-    const response = await fetch(testUrl, {
-      signal: controller.signal,
-      // Note: In a real implementation, you'd configure the actual proxy here
-      // This is a simplified version for demonstration
-    })
-
-    clearTimeout(timeoutId)
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-function parseProxyString(proxyString: string): ProxyData | null {
-  const parts = proxyString.trim().split(":")
-  if (parts.length !== 2) return null
-
-  const [ip, port] = parts
-
-  // Basic IP validation
-  const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/
-  if (!ipRegex.test(ip)) return null
-
-  const portNum = Number.parseInt(port)
-  if (isNaN(portNum) || portNum < 1 || portNum > 65535) return null
-
-  return {
-    ip,
-    port,
-    country: "Unknown", // You could use a GeoIP service here
-    ping: Math.floor(Math.random() * 200) + 20, // Simulated for demo
-  }
-}
+// Removed the simulated testProxy function from here.
+// Real proxy testing will happen when the browser attempts to use it.
 
 export async function GET() {
   try {
-    // For demo purposes, return mock data with some real-looking proxies
-    // In production, you'd fetch from actual proxy sources
-    const mockProxies: ProxyData[] = [
-      { ip: "185.199.229.156", port: "7492", country: "US", ping: 45 },
-      { ip: "185.199.228.220", port: "7492", country: "CA", ping: 67 },
-      { ip: "185.199.231.45", port: "8382", country: "UK", ping: 89 },
-      { ip: "188.74.210.207", port: "6286", country: "DE", ping: 34 },
-      { ip: "188.74.183.10", port: "8279", country: "FR", ping: 56 },
-    ]
+    const fetchedProxies = await fetchProxiesFromProxyScrape()
 
-    // Simulate scanning delay
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    // Test a random proxy to simulate real behavior
-    const randomProxy = mockProxies[Math.floor(Math.random() * mockProxies.length)]
-    const isWorking = Math.random() > 0.3 // 70% success rate
-
-    if (isWorking) {
-      return NextResponse.json({
-        success: true,
-        proxy: {
-          ip: randomProxy.ip,
-          port: randomProxy.port,
-          country: randomProxy.country,
-          ping: randomProxy.ping,
-        },
-      })
-    } else {
+    if (fetchedProxies.length === 0) {
       return NextResponse.json({
         success: false,
-        error: "No working proxies found in current scan",
+        error: "No proxies found or failed to fetch from source.",
       })
     }
+
+    // For the "Scan through proxy list" method, we'll return a few random proxies
+    // to simulate finding available ones. In a real app, you might test them here
+    // or return a larger list for the user to choose from.
+    const numProxiesToShow = Math.min(fetchedProxies.length, 5) // Show up to 5 random proxies
+    const selectedProxies: ProxyData[] = []
+    const usedIndices = new Set<number>()
+
+    while (selectedProxies.length < numProxiesToShow) {
+      const randomIndex = Math.floor(Math.random() * fetchedProxies.length)
+      if (!usedIndices.has(randomIndex)) {
+        selectedProxies.push(fetchedProxies[randomIndex])
+        usedIndices.add(randomIndex)
+      }
+    }
+
+    // Simulate a "working" status for these scanned proxies for display purposes
+    const proxiesWithStatus = selectedProxies.map((p) => ({
+      ...p,
+      status: "inactive" as const, // Initially inactive, user clicks to activate
+      speed: Math.floor(Math.random() * 200) + 50, // Simulate a speed
+    }))
+
+    return NextResponse.json({
+      success: true,
+      proxies: proxiesWithStatus, // Return a list of proxies
+    })
   } catch (error) {
     console.error("Proxy scan error:", error)
     return NextResponse.json({

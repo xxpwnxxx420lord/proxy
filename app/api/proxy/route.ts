@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { Agent } from "undici" // Import Agent from undici for proxy support
 
 // Security: Allowed domains/protocols
 const ALLOWED_PROTOCOLS = ["http:", "https:"]
@@ -322,6 +323,7 @@ function rewriteHtml(html: string, baseUrl: string): string {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const targetUrl = searchParams.get("url")
+  const proxyString = searchParams.get("proxy") // Get the proxy IP:PORT from the URL
 
   if (!targetUrl) {
     return NextResponse.json({ error: "URL parameter is required" }, { status: 400 })
@@ -331,27 +333,47 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid or blocked URL" }, { status: 400 })
   }
 
-  try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout
+  const fetchOptions: RequestInit = {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.5",
+      "Accept-Encoding": "gzip, deflate, br",
+      DNT: "1",
+      Connection: "keep-alive",
+      "Upgrade-Insecure-Requests": "1",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+    },
+    redirect: "follow",
+  }
 
-    const response = await fetch(targetUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        DNT: "1",
-        Connection: "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-      },
-      redirect: "follow",
-      signal: controller.signal,
-    })
+  // Configure proxy if provided
+  if (proxyString) {
+    const [proxyIp, proxyPort] = proxyString.split(":")
+    if (proxyIp && proxyPort) {
+      const proxyUrl = `http://${proxyIp}:${proxyPort}` // Assuming HTTP proxy from proxyscrape.com
+      try {
+        // undici's Agent supports proxy configuration
+        fetchOptions.dispatcher = new Agent({
+          proxy: proxyUrl,
+          connectTimeout: 10000, // 10 seconds for connection
+        })
+        console.log(`Using proxy: ${proxyUrl} for ${targetUrl}`)
+      } catch (e) {
+        console.error(`Failed to create proxy agent for ${proxyUrl}:`, e)
+        return NextResponse.json({ error: "Invalid proxy configuration" }, { status: 500 })
+      }
+    }
+  }
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 20000) // 20 second timeout for the entire request
+
+  try {
+    const response = await fetch(targetUrl, { ...fetchOptions, signal: controller.signal })
 
     clearTimeout(timeoutId)
 
@@ -391,7 +413,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Request timeout - the website took too long to respond" }, { status: 408 })
     }
     return NextResponse.json(
-      { error: "Failed to fetch the requested URL. The website may be down or blocking requests." },
+      {
+        error:
+          "Failed to fetch the requested URL. The website may be down or blocking requests, or the proxy is not working.",
+      },
       { status: 500 },
     )
   }

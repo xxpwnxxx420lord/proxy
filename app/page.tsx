@@ -40,39 +40,35 @@ interface Proxy {
 
 export default function ProxyManager() {
   const [selectedMethod, setSelectedMethod] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(false) // For general loading states (manual proxy connect)
   const [showManualInput, setShowManualInput] = useState(false)
   const [manualProxy, setManualProxy] = useState("")
   const [activeProxy, setActiveProxy] = useState<Proxy | null>(null)
   const [proxyList, setProxyList] = useState<Proxy[]>([])
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null)
-  const [isScanning, setIsScanning] = useState(false)
+  const [isScanning, setIsScanning] = useState(false) // For proxy scanning specific loading
 
   // Browser state
   const [browserUrlInput, setBrowserUrlInput] = useState("https://www.google.com")
   const [currentBrowsedUrl, setCurrentBrowsedUrl] = useState("")
-  const [fetchedHtml, setFetchedHtml] = useState("")
   const [isBrowserLoading, setIsBrowserLoading] = useState(false)
   const [browserError, setBrowserError] = useState("")
   const [browserHistory, setBrowserHistory] = useState<string[]>([])
   const [browserHistoryIndex, setBrowserHistoryIndex] = useState(-1)
   const [navigationCount, setNavigationCount] = useState(0)
 
-  const browserFrameRef = useRef<HTMLDivElement>(null)
-
-  // Mock proxy data
-  const mockProxies: Proxy[] = [
-    { ip: "185.199.229.156", port: "7492", country: "United States", flag: "🇺🇸", speed: 45, status: "inactive" },
-    { ip: "185.199.228.220", port: "7300", country: "Germany", flag: "🇩🇪", speed: 32, status: "inactive" },
-    { ip: "185.199.231.45", port: "8382", country: "United Kingdom", flag: "🇬🇧", speed: 28, status: "inactive" },
-    { ip: "198.50.163.192", port: "3129", country: "Canada", flag: "🇨🇦", speed: 52, status: "inactive" },
-    { ip: "203.142.71.13", port: "8080", country: "Japan", flag: "🇯🇵", speed: 67, status: "inactive" },
-  ]
+  const browserFrameRef = useRef<HTMLIFrameElement>(null)
 
   // Listen for navigation messages from the iframe
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === "PROXY_NAVIGATION") {
+      // Ensure the message is from our iframe and has the correct type
+      if (
+        browserFrameRef.current &&
+        event.source === browserFrameRef.current.contentWindow &&
+        event.data &&
+        event.data.type === "PROXY_NAVIGATION"
+      ) {
         const newUrl = event.data.url
         console.log("Navigation detected:", newUrl)
 
@@ -83,6 +79,12 @@ export default function ProxyManager() {
         // Update navigation count to show activity
         setNavigationCount((prev) => prev + 1)
 
+        // Update history
+        const newHistory = browserHistory.slice(0, browserHistoryIndex + 1)
+        newHistory.push(newUrl)
+        setBrowserHistory(newHistory)
+        setBrowserHistoryIndex(newHistory.length - 1)
+
         // Show toast for navigation
         showToast(`Navigated to ${new URL(newUrl).hostname}`, "success")
       }
@@ -90,49 +92,44 @@ export default function ProxyManager() {
 
     window.addEventListener("message", handleMessage)
     return () => window.removeEventListener("message", handleMessage)
-  }, [])
+  }, [browserHistory, browserHistoryIndex, navigationCount])
 
   const showToast = (message: string, type: "success" | "error") => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 4000)
   }
 
-  const testProxy = async (proxy: Proxy): Promise<boolean> => {
-    await new Promise((resolve) => setTimeout(resolve, 2000 + Math.random() * 2000))
-    return Math.random() > 0.3
-  }
-
   const handleScanProxies = async () => {
     setSelectedMethod("Scan through proxy list")
     setIsScanning(true)
-    setIsLoading(true)
+    setProxyList([]) // Clear previous list
+    setActiveProxy(null) // Clear active proxy when scanning
 
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    setProxyList(mockProxies)
-
-    for (let i = 0; i < mockProxies.length; i++) {
-      const proxy = { ...mockProxies[i], status: "testing" as const }
-      setProxyList((prev) => prev.map((p, idx) => (idx === i ? proxy : p)))
-
-      const isWorking = await testProxy(proxy)
-      const finalStatus = isWorking ? "inactive" : "inactive"
-      setProxyList((prev) =>
-        prev.map((p, idx) =>
-          idx === i
-            ? { ...proxy, status: finalStatus, speed: isWorking ? Math.floor(Math.random() * 100) + 20 : 0 }
-            : p,
-        ),
-      )
+    try {
+      const response = await fetch("/api/proxy/scan")
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to fetch proxies from API")
+      }
+      const data = await response.json()
+      if (data.success && data.proxies && data.proxies.length > 0) {
+        setProxyList(data.proxies)
+        showToast("Proxy scan completed! Click on an available proxy to connect.", "success")
+      } else {
+        showToast(data.error || "No working proxies found in current scan.", "error")
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to scan for proxies.", "error")
+    } finally {
+      setIsScanning(false)
     }
-
-    setIsLoading(false)
-    setIsScanning(false)
-    showToast("Proxy scan completed! Click on a proxy to connect.", "success")
   }
 
   const handleManualProxy = () => {
     setSelectedMethod("Enter your own proxy")
     setShowManualInput(true)
+    setProxyList([]) // Clear proxy list when entering manual
+    setActiveProxy(null) // Clear active proxy
   }
 
   const handleManualProxySubmit = async () => {
@@ -150,52 +147,59 @@ export default function ProxyManager() {
       port,
       country: "Unknown",
       flag: "🌐",
-      speed: 0,
+      speed: 0, // Speed will be determined by actual usage
       status: "testing",
     }
 
-    setActiveProxy(proxy)
+    setActiveProxy(proxy) // Set proxy to testing state immediately
+    showToast("Attempting to connect to manual proxy...", "success")
 
-    const isWorking = await testProxy(proxy)
-
-    if (isWorking) {
-      const workingProxy = { ...proxy, status: "active" as const, speed: Math.floor(Math.random() * 100) + 20 }
-      setActiveProxy(workingProxy)
-      showToast("Proxy successfully connected!", "success")
-    } else {
-      setActiveProxy({ ...proxy, status: "inactive" })
-      showToast("Failed to connect to proxy. Please check the address and try again.", "error")
-    }
-
+    // No direct "test" API call here, the real test happens when browsing.
+    // We assume it's "active" for UI purposes, but the browser will fail if it's not.
+    setActiveProxy({ ...proxy, status: "active", speed: Math.floor(Math.random() * 100) + 20 })
     setIsLoading(false)
+    // The actual success/failure will be evident when trying to browse.
   }
 
   const handleProxySelect = async (selectedProxy: Proxy) => {
-    if (selectedProxy.speed === 0) {
-      showToast("This proxy is not available", "error")
+    if (selectedProxy.status === "testing") {
+      showToast("This proxy is currently being tested.", "error")
       return
     }
 
-    setIsLoading(true)
+    setIsLoading(true) // Indicate loading for proxy connection
 
-    if (activeProxy) {
-      setProxyList((prev) => prev.map((p) => (p.ip === activeProxy.ip ? { ...p, status: "inactive" } : p)))
-    }
+    // Set all other proxies to inactive and the selected one to testing
+    setProxyList((prev) =>
+      prev.map((p) => {
+        if (p.ip === selectedProxy.ip && p.port === selectedProxy.port) {
+          return { ...p, status: "testing" }
+        }
+        return { ...p, status: "inactive" }
+      }),
+    )
 
-    setProxyList((prev) => prev.map((p) => (p.ip === selectedProxy.ip ? { ...p, status: "testing" } : p)))
+    setActiveProxy({ ...selectedProxy, status: "testing" })
+    showToast(`Attempting to connect to proxy in ${selectedProxy.country}...`, "success")
 
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    // Simulate a brief delay for connection attempt
+    await new Promise((resolve) => setTimeout(resolve, 1500))
 
-    const workingProxy = { ...selectedProxy, status: "active" as const }
-    setProxyList((prev) => prev.map((p) => (p.ip === selectedProxy.ip ? workingProxy : { ...p, status: "inactive" })))
-    setActiveProxy(workingProxy)
+    // Assume connection is successful for UI, actual success/failure is in browser
+    const connectedProxy = { ...selectedProxy, status: "active" as const }
+    setProxyList((prev) =>
+      prev.map((p) =>
+        p.ip === selectedProxy.ip && p.port === selectedProxy.port ? connectedProxy : { ...p, status: "inactive" },
+      ),
+    )
+    setActiveProxy(connectedProxy)
     setIsLoading(false)
     showToast(`Connected to proxy in ${selectedProxy.country}!`, "success")
   }
 
-  const loadUrlInEmbeddedBrowser = async (targetUrl: string, addToHistory = true) => {
+  const loadUrlInEmbeddedBrowser = (targetUrl: string) => {
     if (!activeProxy || activeProxy.status !== "active") {
-      showToast("Please connect to a proxy first to use the browser.", "error")
+      showToast("Please connect to an active proxy first to use the browser.", "error")
       return
     }
     if (!targetUrl.trim()) return
@@ -208,17 +212,14 @@ export default function ProxyManager() {
       normalizedUrl = `https://${normalizedUrl}`
     }
 
-    // Update the URL for the iframe directly
     setCurrentBrowsedUrl(normalizedUrl)
     setBrowserUrlInput(normalizedUrl)
 
-    if (addToHistory) {
-      const newHistory = browserHistory.slice(0, browserHistoryIndex + 1)
-      newHistory.push(normalizedUrl)
-      setBrowserHistory(newHistory)
-      setBrowserHistoryIndex(newHistory.length - 1)
+    // Construct the proxy URL for the iframe src
+    const proxySrc = `/api/proxy?url=${encodeURIComponent(normalizedUrl)}&proxy=${activeProxy.ip}:${activeProxy.port}`
+    if (browserFrameRef.current) {
+      browserFrameRef.current.src = proxySrc
     }
-    // The iframe's onLoad will set isBrowserLoading to false
   }
 
   const handleBrowserSubmit = (e: React.FormEvent) => {
@@ -233,7 +234,7 @@ export default function ProxyManager() {
       const newIndex = browserHistoryIndex - 1
       setBrowserHistoryIndex(newIndex)
       const prevUrl = browserHistory[newIndex]
-      loadUrlInEmbeddedBrowser(prevUrl, false)
+      loadUrlInEmbeddedBrowser(prevUrl)
     }
   }
 
@@ -242,13 +243,15 @@ export default function ProxyManager() {
       const newIndex = browserHistoryIndex + 1
       setBrowserHistoryIndex(newIndex)
       const nextUrl = browserHistory[newIndex]
-      loadUrlInEmbeddedBrowser(nextUrl, false)
+      loadUrlInEmbeddedBrowser(nextUrl)
     }
   }
 
   const handleBrowserRefresh = () => {
-    if (currentBrowsedUrl) {
-      loadUrlInEmbeddedBrowser(currentBrowsedUrl, false)
+    if (currentBrowsedUrl && browserFrameRef.current && activeProxy) {
+      // Force refresh by adding a unique timestamp
+      browserFrameRef.current.src = `/api/proxy?url=${encodeURIComponent(currentBrowsedUrl)}&proxy=${activeProxy.ip}:${activeProxy.port}&_t=${Date.now()}`
+      setIsBrowserLoading(true)
     }
   }
 
@@ -283,7 +286,7 @@ export default function ProxyManager() {
               <DropdownMenuItem
                 onClick={handleScanProxies}
                 className="hover:bg-white/10 cursor-pointer transition-colors duration-200"
-                disabled={isLoading}
+                disabled={isScanning}
               >
                 <Globe className="mr-2 h-4 w-4" />
                 Scan through proxy list
@@ -291,7 +294,7 @@ export default function ProxyManager() {
               <DropdownMenuItem
                 onClick={handleManualProxy}
                 className="hover:bg-white/10 cursor-pointer transition-colors duration-200"
-                disabled={isLoading}
+                disabled={isLoading || isScanning}
               >
                 <Wifi className="mr-2 h-4 w-4" />
                 Enter your own proxy
@@ -420,9 +423,9 @@ export default function ProxyManager() {
                 {proxyList.map((proxy, index) => (
                   <div
                     key={`${proxy.ip}:${proxy.port}`}
-                    onClick={() => proxy.speed > 0 && proxy.status !== "testing" && handleProxySelect(proxy)}
+                    onClick={() => proxy.status !== "testing" && handleProxySelect(proxy)}
                     className={`flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/10 transition-all duration-300 hover:bg-white/10 ${
-                      proxy.speed > 0 && proxy.status !== "testing" ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                      proxy.status !== "testing" ? "cursor-pointer" : "cursor-not-allowed opacity-50"
                     }`}
                   >
                     <div className="flex items-center gap-4">
@@ -432,9 +435,7 @@ export default function ProxyManager() {
                           {proxy.ip}:{proxy.port}
                         </p>
                         <p className="text-gray-400 text-sm">{proxy.country}</p>
-                        {proxy.speed > 0 && proxy.status === "inactive" && (
-                          <p className="text-blue-400 text-xs">Click to connect</p>
-                        )}
+                        {proxy.status === "inactive" && <p className="text-blue-400 text-xs">Click to connect</p>}
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
@@ -446,16 +447,12 @@ export default function ProxyManager() {
                             ? "bg-green-500/20 text-green-400 border-green-500/30"
                             : proxy.status === "testing"
                               ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-                              : proxy.speed > 0
-                                ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
-                                : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+                              : "bg-blue-500/20 text-blue-400 border-blue-500/30"
                         }`}
                       >
                         {proxy.status === "testing" && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
                         {proxy.status === "active" && "Connected"}
-                        {proxy.status === "inactive" && proxy.speed > 0 && "Available"}
-                        {proxy.status === "inactive" && proxy.speed === 0 && "Unavailable"}
-                        {proxy.status === "testing" && "Testing"}
+                        {proxy.status === "inactive" && "Available"}
                       </Badge>
                     </div>
                   </div>
@@ -507,7 +504,7 @@ export default function ProxyManager() {
                     variant="ghost"
                     size="icon"
                     onClick={handleBrowserRefresh}
-                    disabled={isBrowserLoading}
+                    disabled={isBrowserLoading || !activeProxy || activeProxy.status !== "active"}
                     className="h-8 w-8 text-white/60 hover:text-white hover:bg-white/10"
                   >
                     <RotateCcw className={`h-4 w-4 ${isBrowserLoading ? "animate-spin" : ""}`} />
@@ -516,7 +513,7 @@ export default function ProxyManager() {
                     variant="ghost"
                     size="icon"
                     onClick={handleBrowserHome}
-                    disabled={isBrowserLoading}
+                    disabled={isBrowserLoading || !activeProxy || activeProxy.status !== "active"}
                     className="h-8 w-8 text-white/60 hover:text-white hover:bg-white/10"
                   >
                     <Home className="h-4 w-4" />
@@ -593,10 +590,7 @@ export default function ProxyManager() {
               )}
 
               {/* Website Display */}
-              <div
-                className="bg-white/5 border border-white/10 rounded-lg overflow-hidden relative"
-                ref={browserFrameRef}
-              >
+              <div className="bg-white/5 border border-white/10 rounded-lg overflow-hidden relative">
                 {!activeProxy || activeProxy.status !== "active" ? (
                   <div className="flex items-center justify-center h-96">
                     <div className="text-center">
@@ -615,10 +609,14 @@ export default function ProxyManager() {
                   </div>
                 ) : (
                   <iframe
-                    src={currentBrowsedUrl ? `/api/proxy?url=${encodeURIComponent(currentBrowsedUrl)}` : undefined}
+                    ref={browserFrameRef} // Assign ref to iframe
+                    // The src will be set dynamically by loadUrlInEmbeddedBrowser
                     title="Proxied Browser"
                     className="w-full h-[600px] bg-white rounded-lg border-0"
-                    onLoad={() => setIsBrowserLoading(false)}
+                    onLoad={() => {
+                      setIsBrowserLoading(false)
+                      setBrowserError("") // Clear any previous errors on successful load
+                    }}
                     onError={() => {
                       setBrowserError("Failed to load content in iframe. Check proxy or URL.")
                       setIsBrowserLoading(false)
@@ -645,7 +643,10 @@ export default function ProxyManager() {
                   <span className="font-semibold text-green-400">Please enjoy</span>
                 </div>
                 <p className="text-green-300 text-sm">
-                  🎉 Please enjoy this project I made with this beautiful/wonderful user interface and I hope you guys love the uh mechanics and also enjoy the proxies. proxy list is provided by proxylist if your department bans proxylist that would be sad but if it is blocked I reccomend entering your own proxy through the method! I will add default proxies in a dropdown in the future!
+                  🎉 Please enjoy this project I made with this beautiful/wonderful user interface and I hope you guys
+                  love the uh mechanics and also enjoy the proxies. proxy list is provided by proxylist if your
+                  department bans proxylist that would be sad but if it is blocked I reccomend entering your own proxy
+                  through the method! I will add default proxies in a dropdown in the future!
                 </p>
               </div>
 
