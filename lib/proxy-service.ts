@@ -1,3 +1,5 @@
+import { Agent } from "undici" // Import Agent for real proxy testing
+
 interface ProxyConfig {
   ip: string
   port: number
@@ -15,8 +17,9 @@ interface SearchEngineConfig {
   headers: Record<string, string>
 }
 
-// New, more reliable proxy source from GitHub
-const PROXY_SOURCE_URL = "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt"
+// Reverting to the original proxyscrape.com URL as requested
+const PROXY_SOURCE_URL =
+  "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&skip=0&limit=10"
 
 const COUNTRY_FLAGS: { [key: string]: string } = {
   US: "🇺🇸",
@@ -75,23 +78,66 @@ class ProxyService {
     },
   ]
 
+  // This method is no longer directly used by the frontend for validation,
+  // but it's kept for potential future backend-only proxy management.
+  async testProxyConnectivity(proxyString: string): Promise<{ ping: number; country: string; flag: string }> {
+    const [ip, port] = proxyString.split(":")
+    const testUrl = "https://api.ipify.org?format=json" // A lightweight, reliable endpoint to test connectivity
+    const proxyUrl = `http://${ip}:${port}`
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000) // 5-second timeout for proxy test
+
+    const startTime = Date.now()
+    try {
+      const response = await fetch(testUrl, {
+        dispatcher: new Agent({
+          proxy: proxyUrl,
+          connectTimeout: 3000, // 3 seconds for connection to proxy
+        }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+
+      if (response.ok) {
+        const endTime = Date.now()
+        const ping = endTime - startTime
+        // In a real scenario, you'd parse the response from ipify or a GeoIP service
+        // to get the country. For now, we'll keep it simple.
+        return { ping, country: "Unknown", flag: "🌐" }
+      } else {
+        console.warn(`Proxy ${proxyString} failed test: ${response.status} ${response.statusText}`)
+        return { ping: -1, country: "Failed", flag: "❌" }
+      }
+    } catch (error) {
+      clearTimeout(timeoutId)
+      console.warn(`Proxy ${proxyString} test error:`, error instanceof Error ? error.message : error)
+      return { ping: -1, country: "Failed", flag: "❌" }
+    }
+  }
+
   async loadProxies(): Promise<void> {
     try {
       const response = await fetch(PROXY_SOURCE_URL, {
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/plain", // Request plain text
         },
         cache: "no-store", // Ensure fresh proxies
       })
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch proxy list from GitHub: HTTP ${response.status}`)
+        const errorText = await response.text()
+        console.error(`Failed to fetch proxy list from ProxyScrape: HTTP ${response.status} - ${errorText}`)
+        throw new Error(`Failed to fetch proxy list from ProxyScrape: ${response.statusText}`)
       }
 
       const text = await response.text()
       const lines = text.split("\n").filter((line) => line.trim() && line.includes(":"))
 
+      // For the internal proxy pool, we'll just store them without immediate validation
+      // as validation happens on scan/selection in the frontend.
       this.proxyPool = lines.map((line) => {
         const [ip, port] = line.split(":")
         return {
@@ -99,11 +145,11 @@ class ProxyService {
           port: Number.parseInt(port),
           country: "Unknown", // Placeholder
           flag: "🌐", // Placeholder
-          ping: Math.floor(Math.random() * 200) + 20, // Simulated ping
+          ping: 0, // Will be updated on real validation
         }
       })
     } catch (error) {
-      console.error("Error fetching or parsing proxy list from GitHub for proxy service:", error)
+      console.error("Error fetching or parsing proxyscrape.com for proxy service:", error)
       this.proxyPool = [] // Clear pool on error
     }
   }
@@ -116,37 +162,10 @@ class ProxyService {
     return proxy
   }
 
-  private async makeProxiedRequest(
-    url: string,
-    proxy: ProxyConfig,
-    headers: Record<string, string>,
-  ): Promise<Response> {
-    // This method is for the *search* functionality, which is still simulated for now.
-    // The main browser functionality uses app/api/proxy/route.ts directly.
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
-
-    try {
-      // Simulate proxy request
-      await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 2000))
-
-      // Mock response for search results
-      return new Response(
-        JSON.stringify({
-          success: true,
-          html: `<html><body><h1>Mock Search Results for ${url}</h1><p>This content is simulated as if fetched via proxy ${proxy.ip}:${proxy.port}.</p></body></html>`,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      )
-    } finally {
-      clearTimeout(timeoutId)
-    }
-  }
-
   async searchWithProxy(query: string, maxRetries = 3): Promise<any> {
+    // This method remains simulated as implementing a real search engine scraper
+    // is a complex task outside the scope of the current proxy browser functionality.
+    // The primary focus is on the browser's ability to load pages through proxies.
     if (this.proxyPool.length === 0) {
       await this.loadProxies()
     }
@@ -173,33 +192,28 @@ class ProxyService {
       const searchUrl = searchEngine.searchUrl + encodeURIComponent(query)
 
       try {
-        const response = await this.makeProxiedRequest(searchUrl, proxy, {
-          ...searchEngine.headers,
-          "User-Agent": searchEngine.userAgent,
-        })
+        // Simulate proxy request
+        await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 2000))
 
-        if (response.ok) {
-          const data = await response.json()
-          return {
-            success: true,
-            results: this.parseSearchResults(data.html, searchEngine.name),
-            proxy: `${proxy.ip}:${proxy.port}`,
-            searchEngine: searchEngine.name,
-          }
+        // Mock response for search results
+        return {
+          success: true,
+          results: this.parseSearchResults(`<html><body><h1>Mock Search Results for ${searchUrl}</h1><p>This content is simulated as if fetched via proxy ${proxy.ip}:${proxy.port}.</p></body></html>`, searchEngine.name),
+          proxy: `${proxy.ip}:${proxy.port}`,
+          searchEngine: searchEngine.name,
         }
       } catch (error) {
         lastError = error as Error
-        console.warn(`Proxy ${proxy.ip}:${proxy.port} failed:`, error)
+        console.warn(`Proxy ${proxy.ip}:${proxy.port} failed (simulated search):`, error)
         continue
       }
     }
 
-    throw lastError || new Error("All proxy attempts failed")
+    throw lastError || new Error("All proxy attempts failed (simulated search)")
   }
 
   private parseSearchResults(html: string, engineName: string): any[] {
-    // In a real implementation, this would parse HTML using a library like cheerio
-    // For demonstration, return mock results
+    // This remains a mock parsing function.
     return [
       {
         title: `Search Result 1 (via ${engineName})`,
@@ -212,17 +226,6 @@ class ProxyService {
         snippet: "Another mock search result snippet...",
       },
     ]
-  }
-
-  async validateProxy(ip: string, port: number): Promise<boolean> {
-    // This is a client-side validation simulation.
-    // The real validation happens when the backend tries to use the proxy.
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      return Math.random() > 0.3 // 70% success rate for demo
-    } catch (error) {
-      return false
-    }
   }
 }
 

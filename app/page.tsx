@@ -34,9 +34,24 @@ interface Proxy {
   port: string
   country: string
   flag: string
-  speed: number
+  speed?: number
   status: "active" | "inactive" | "testing"
 }
+
+// Hardcoded proxies from the user's list
+const HARDCODED_PROXIES = [
+  "149.126.101.162:8080",
+  "1.10.146.76:3128",
+  "102.0.21.14:8080",
+  "108.162.192.173:80",
+  "108.162.192.194:80",
+  "1.54.175.138:16000",
+  "102.177.176.101:80",
+  "1.10.239.143:8080",
+  "1.52.197.113:16000",
+  "1.52.198.221:16000",
+  "1.52.198.150:16000",
+]
 
 export default function ProxyManager() {
   const [selectedMethod, setSelectedMethod] = useState<string>("")
@@ -99,6 +114,28 @@ export default function ProxyManager() {
     setTimeout(() => setToast(null), 4000)
   }
 
+  // Real proxy validation function
+  const validateProxy = async (proxyString: string): Promise<{ valid: boolean; ping?: number }> => {
+    try {
+      const response = await fetch("/api/proxy/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ proxy: proxyString }),
+      })
+
+      const data = await response.json()
+      return {
+        valid: data.success,
+        ping: data.ping,
+      }
+    } catch (error) {
+      console.error("Error validating proxy:", error)
+      return { valid: false }
+    }
+  }
+
   const handleScanProxies = async () => {
     setSelectedMethod("Scan through proxy list")
     setIsScanning(true)
@@ -106,21 +143,48 @@ export default function ProxyManager() {
     setActiveProxy(null) // Clear active proxy when scanning
     setBrowserError("") // Clear any previous browser errors
 
+    // Create initial proxy list from hardcoded proxies
+    const initialProxies: Proxy[] = HARDCODED_PROXIES.map((proxy) => {
+      const [ip, port] = proxy.split(":")
+      return {
+        ip,
+        port,
+        country: "Unknown", // We don't have country data
+        flag: "🌐", // Generic flag
+        status: "testing", // Will be validated
+      }
+    })
+
+    setProxyList(initialProxies)
+
+    // Validate each proxy in parallel
+    const validationPromises = initialProxies.map(async (proxy, index) => {
+      const proxyString = `${proxy.ip}:${proxy.port}`
+      const result = await validateProxy(proxyString)
+
+      // Update the proxy list with validation results
+      setProxyList((currentList) => {
+        const updatedList = [...currentList]
+        updatedList[index] = {
+          ...updatedList[index],
+          status: result.valid ? "inactive" : "inactive", // Set to inactive even if valid so user can click to connect
+          speed: result.ping,
+        }
+        return updatedList
+      })
+
+      return {
+        ...proxy,
+        valid: result.valid,
+        ping: result.ping,
+      }
+    })
+
     try {
-      const response = await fetch("/api/proxy/scan")
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to fetch proxies from API")
-      }
-      const data = await response.json()
-      if (data.success && data.proxies && data.proxies.length > 0) {
-        setProxyList(data.proxies)
-        showToast("Proxy scan completed! Click on an available proxy to connect.", "success")
-      } else {
-        showToast(data.error || "No working proxies found in current scan.", "error")
-      }
+      await Promise.all(validationPromises)
+      showToast("Proxy scan completed! Click on an available proxy to connect.", "success")
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Failed to scan for proxies.", "error")
+      showToast("Error validating some proxies. Some may still be available.", "error")
     } finally {
       setIsScanning(false)
     }
@@ -149,21 +213,26 @@ export default function ProxyManager() {
       port,
       country: "Manual", // Set country to Manual for user-entered proxies
       flag: "👤", // User icon flag
-      speed: 0, // Speed will be determined by actual usage
+      speed: undefined, // Will be determined by validation
       status: "testing",
     }
 
     setActiveProxy(proxy) // Set proxy to testing state immediately
-    showToast("Attempting to connect to manual proxy...", "success")
+    showToast("Testing manual proxy connection...", "success")
 
-    // Simulate a brief delay for connection attempt
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    // Actually validate the proxy
+    const validation = await validateProxy(manualProxy)
 
-    // Assume connection is successful for UI, actual success/failure is in browser
-    const connectedProxy = { ...proxy, status: "active", speed: Math.floor(Math.random() * 100) + 20 }
-    setActiveProxy(connectedProxy)
+    if (validation.valid) {
+      const connectedProxy = { ...proxy, status: "active", speed: validation.ping }
+      setActiveProxy(connectedProxy)
+      showToast(`Manual proxy ${manualProxy} validated successfully with ${validation.ping}ms ping!`, "success")
+    } else {
+      setActiveProxy({ ...proxy, status: "inactive" })
+      showToast(`Manual proxy ${manualProxy} failed validation. Try another proxy.`, "error")
+    }
+
     setIsLoading(false)
-    showToast(`Manual proxy ${manualProxy} set as active.`, "success")
   }
 
   const handleProxySelect = async (selectedProxy: Proxy) => {
@@ -186,21 +255,32 @@ export default function ProxyManager() {
     )
 
     setActiveProxy({ ...selectedProxy, status: "testing" })
-    showToast(`Attempting to connect to proxy in ${selectedProxy.country}...`, "success")
+    showToast(`Testing proxy ${selectedProxy.ip}:${selectedProxy.port}...`, "success")
 
-    // Simulate a brief delay for connection attempt
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    // Actually validate the proxy
+    const proxyString = `${selectedProxy.ip}:${selectedProxy.port}`
+    const validation = await validateProxy(proxyString)
 
-    // Assume connection is successful for UI, actual success/failure is in browser
-    const connectedProxy = { ...selectedProxy, status: "active" as const }
-    setProxyList((prev) =>
-      prev.map((p) =>
-        p.ip === selectedProxy.ip && p.port === selectedProxy.port ? connectedProxy : { ...p, status: "inactive" },
-      ),
-    )
-    setActiveProxy(connectedProxy)
+    if (validation.valid) {
+      const connectedProxy = { ...selectedProxy, status: "active", speed: validation.ping }
+      setProxyList((prev) =>
+        prev.map((p) =>
+          p.ip === selectedProxy.ip && p.port === selectedProxy.port ? connectedProxy : { ...p, status: "inactive" },
+        ),
+      )
+      setActiveProxy(connectedProxy)
+      showToast(`Connected to proxy ${proxyString} with ${validation.ping}ms ping!`, "success")
+    } else {
+      setProxyList((prev) =>
+        prev.map((p) =>
+          p.ip === selectedProxy.ip && p.port === selectedProxy.port ? { ...p, status: "inactive" } : p,
+        ),
+      )
+      setActiveProxy(null)
+      showToast(`Proxy ${proxyString} failed validation. Try another proxy.`, "error")
+    }
+
     setIsLoading(false)
-    showToast(`Connected to proxy in ${selectedProxy.country}!`, "success")
   }
 
   const loadUrlInEmbeddedBrowser = (targetUrl: string) => {
@@ -362,7 +442,7 @@ export default function ProxyManager() {
                 <div className="space-y-2">
                   <p className="text-gray-400 text-sm">Speed</p>
                   <p className="text-green-400 font-semibold">
-                    {activeProxy.speed > 0 ? `${activeProxy.speed}ms - Fast` : "Testing..."}
+                    {activeProxy.speed ? `${activeProxy.speed}ms - Fast` : "Testing..."}
                   </p>
                 </div>
               </div>
@@ -421,7 +501,7 @@ export default function ProxyManager() {
                 {isScanning && (
                   <div className="flex items-center gap-2 text-blue-400">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Scanning proxies...</span>
+                    <span className="text-sm">Testing proxies...</span>
                   </div>
                 )}
               </div>
@@ -445,7 +525,7 @@ export default function ProxyManager() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      {proxy.speed > 0 && <span className="text-sm text-green-400">{proxy.speed}ms</span>}
+                      {proxy.speed && <span className="text-sm text-green-400">{proxy.speed}ms</span>}
                       <Badge
                         variant="secondary"
                         className={`${
@@ -568,12 +648,14 @@ export default function ProxyManager() {
                         <span className="text-white font-mono">{currentBrowsedUrl}</span>
                       </div>
                       <div className="flex items-center gap-4">
-                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                        <span className="text-green-400">Proxied</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <ExternalLink className="w-3 h-3 text-blue-400" />
-                        <span className="text-blue-400">Fluent Navigation</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                          <span className="text-green-400">Proxied</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <ExternalLink className="w-3 h-3 text-blue-400" />
+                          <span className="text-blue-400">Fluent Navigation</span>
+                        </div>
                       </div>
                     </div>
                   </CardContent>
@@ -621,8 +703,9 @@ export default function ProxyManager() {
                       setIsBrowserLoading(false)
                       setBrowserError("") // Clear any previous errors on successful load
                     }}
-                    onError={() => {
-                      setBrowserError("Failed to load content in iframe. Check proxy or URL.")
+                    onError={(e) => {
+                      console.error("iframe error:", e)
+                      setBrowserError("Failed to load content in iframe. The proxy may be down or blocking this site.")
                       setIsBrowserLoading(false)
                     }}
                   />

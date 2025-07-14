@@ -354,12 +354,13 @@ export async function GET(request: NextRequest) {
   if (proxyString) {
     const [proxyIp, proxyPort] = proxyString.split(":")
     if (proxyIp && proxyPort) {
-      const proxyUrl = `http://${proxyIp}:${proxyPort}` // Assuming HTTP proxy from proxyscrape.com
+      const proxyUrl = `http://${proxyIp}:${proxyPort}`
       try {
         // undici's Agent supports proxy configuration
         fetchOptions.dispatcher = new Agent({
           proxy: proxyUrl,
           connectTimeout: 10000, // 10 seconds for connection
+          bodyTimeout: 30000, // 30 seconds for body
         })
         console.log(`Using proxy: ${proxyUrl} for ${targetUrl}`)
       } catch (e) {
@@ -370,9 +371,10 @@ export async function GET(request: NextRequest) {
   }
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 20000) // 20 second timeout for the entire request
+  const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout for the entire request
 
   try {
+    console.log(`Fetching ${targetUrl} ${proxyString ? `via proxy ${proxyString}` : "directly"}`)
     const response = await fetch(targetUrl, { ...fetchOptions, signal: controller.signal })
 
     clearTimeout(timeoutId)
