@@ -35,7 +35,7 @@ interface Proxy {
   country: string
   flag: string
   speed?: number
-  status: "active" | "inactive" | "testing"
+  status: "active" | "inactive" | "testing" | "available" | "failed"
 }
 
 // Hardcoded proxies from the user's list
@@ -167,7 +167,7 @@ export default function ProxyManager() {
         const updatedList = [...currentList]
         updatedList[index] = {
           ...updatedList[index],
-          status: result.valid ? "inactive" : "inactive", // Set to inactive even if valid so user can click to connect
+          status: result.valid ? "available" : "failed", // Set to available if valid, failed if not
           speed: result.ping,
         }
         return updatedList
@@ -228,7 +228,7 @@ export default function ProxyManager() {
       setActiveProxy(connectedProxy)
       showToast(`Manual proxy ${manualProxy} validated successfully with ${validation.ping}ms ping!`, "success")
     } else {
-      setActiveProxy({ ...proxy, status: "inactive" })
+      setActiveProxy({ ...proxy, status: "failed" }) // Set to failed if validation fails
       showToast(`Manual proxy ${manualProxy} failed validation. Try another proxy.`, "error")
     }
 
@@ -238,6 +238,10 @@ export default function ProxyManager() {
   const handleProxySelect = async (selectedProxy: Proxy) => {
     if (selectedProxy.status === "testing") {
       showToast("This proxy is currently being tested.", "error")
+      return
+    }
+    if (selectedProxy.status === "failed") {
+      showToast("This proxy failed validation and cannot be used.", "error")
       return
     }
 
@@ -250,12 +254,12 @@ export default function ProxyManager() {
         if (p.ip === selectedProxy.ip && p.port === selectedProxy.port) {
           return { ...p, status: "testing" }
         }
-        return { ...p, status: "inactive" }
+        return { ...p, status: "available" } // Keep others available, not inactive
       }),
     )
 
     setActiveProxy({ ...selectedProxy, status: "testing" })
-    showToast(`Testing proxy ${selectedProxy.ip}:${selectedProxy.port}...`, "success")
+    showToast(`Attempting to connect to proxy ${selectedProxy.ip}:${selectedProxy.port}...`, "success")
 
     // Actually validate the proxy
     const proxyString = `${selectedProxy.ip}:${selectedProxy.port}`
@@ -265,16 +269,14 @@ export default function ProxyManager() {
       const connectedProxy = { ...selectedProxy, status: "active", speed: validation.ping }
       setProxyList((prev) =>
         prev.map((p) =>
-          p.ip === selectedProxy.ip && p.port === selectedProxy.port ? connectedProxy : { ...p, status: "inactive" },
+          p.ip === selectedProxy.ip && p.port === selectedProxy.port ? connectedProxy : { ...p, status: "available" },
         ),
       )
       setActiveProxy(connectedProxy)
       showToast(`Connected to proxy ${proxyString} with ${validation.ping}ms ping!`, "success")
     } else {
       setProxyList((prev) =>
-        prev.map((p) =>
-          p.ip === selectedProxy.ip && p.port === selectedProxy.port ? { ...p, status: "inactive" } : p,
-        ),
+        prev.map((p) => (p.ip === selectedProxy.ip && p.port === selectedProxy.port ? { ...p, status: "failed" } : p)),
       )
       setActiveProxy(null)
       showToast(`Proxy ${proxyString} failed validation. Try another proxy.`, "error")
@@ -406,12 +408,15 @@ export default function ProxyManager() {
                         ? "bg-green-500/20 text-green-400 border-green-500/30"
                         : activeProxy.status === "testing"
                           ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-                          : "bg-red-500/20 text-red-400 border-red-500/30"
+                          : activeProxy.status === "failed"
+                            ? "bg-red-500/20 text-red-400 border-red-500/30"
+                            : "bg-blue-500/20 text-blue-400 border-blue-500/30" // For 'available'
                     } transition-all duration-300`}
                   >
                     {activeProxy.status === "active" && <CheckCircle className="w-3 h-3 mr-1" />}
                     {activeProxy.status === "testing" && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
-                    {activeProxy.status === "inactive" && <XCircle className="w-3 h-3 mr-1" />}
+                    {activeProxy.status === "failed" && <XCircle className="w-3 h-3 mr-1" />}
+                    {activeProxy.status === "available" && <Wifi className="w-3 h-3 mr-1" />}
                     {activeProxy.status.charAt(0).toUpperCase() + activeProxy.status.slice(1)}
                   </Badge>
                   {navigationCount > 0 && (
@@ -509,9 +514,13 @@ export default function ProxyManager() {
                 {proxyList.map((proxy, index) => (
                   <div
                     key={`${proxy.ip}:${proxy.port}`}
-                    onClick={() => proxy.status !== "testing" && handleProxySelect(proxy)}
+                    onClick={() =>
+                      (proxy.status === "available" || proxy.status === "inactive") && handleProxySelect(proxy)
+                    }
                     className={`flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/10 transition-all duration-300 hover:bg-white/10 ${
-                      proxy.status !== "testing" ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                      proxy.status === "available" || proxy.status === "inactive"
+                        ? "cursor-pointer"
+                        : "cursor-not-allowed opacity-50"
                     }`}
                   >
                     <div className="flex items-center gap-4">
@@ -521,7 +530,8 @@ export default function ProxyManager() {
                           {proxy.ip}:{proxy.port}
                         </p>
                         <p className="text-gray-400 text-sm">{proxy.country}</p>
-                        {proxy.status === "inactive" && <p className="text-blue-400 text-xs">Click to connect</p>}
+                        {proxy.status === "available" && <p className="text-blue-400 text-xs">Click to connect</p>}
+                        {proxy.status === "failed" && <p className="text-red-400 text-xs">Failed to validate</p>}
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
@@ -533,12 +543,15 @@ export default function ProxyManager() {
                             ? "bg-green-500/20 text-green-400 border-green-500/30"
                             : proxy.status === "testing"
                               ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-                              : "bg-blue-500/20 text-blue-400 border-blue-500/30"
+                              : proxy.status === "failed"
+                                ? "bg-red-500/20 text-red-400 border-red-500/30"
+                                : "bg-blue-500/20 text-blue-400 border-blue-500/30" // For 'available'
                         }`}
                       >
                         {proxy.status === "testing" && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
                         {proxy.status === "active" && "Connected"}
-                        {proxy.status === "inactive" && "Available"}
+                        {proxy.status === "available" && "Available"}
+                        {proxy.status === "failed" && "Failed"}
                       </Badge>
                     </div>
                   </div>
